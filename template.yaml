@@ -1,0 +1,91 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  newsletter
+
+  Sample SAM Template for newsletter
+
+Globals:
+  Function:
+    Timeout: 300
+    Tracing: Active
+    LoggingConfig:
+      LogFormat: JSON
+  Api:
+    TracingEnabled: true
+
+Resources:
+
+  EmailFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: nl_email/
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Architectures:
+        - x86_64
+      Events:
+        NLEmailEvent:
+          Type: Api
+          Properties:
+            Path: /nlemail
+            Method: get
+        NLEmailSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: cron(30 3 ? * SUN *)  # 9:00 AM IST = 3:30 AM UTC
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Scan
+              Resource: arn:aws:dynamodb:ap-south-1:347698945340:table/user-table
+
+  EODDataFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: eod_data_cl/
+      Handler: app.lambda_handler
+      Runtime: python3.12
+      Architectures:
+        - x86_64
+      Events:
+        EODDataEvent:
+          Type: Api
+          Properties:
+            Path: /eoddatacl
+            Method: get
+        EODDataSchedule:
+          Type: Schedule
+          Properties:
+            Schedule: cron(30 17 ? * * *)  # 11:00 PM IST = 5:30 PM UTC
+      Policies:
+        - Version: "2012-10-17"
+          Statement:
+            - Effect: Allow
+              Action:
+                - dynamodb:Scan
+              Resource:
+                - arn:aws:dynamodb:ap-south-1:347698945340:table/user-table
+                - arn:aws:dynamodb:ap-south-1:347698945340:table/codeforces_data
+
+  ApplicationResourceGroup:
+    Type: AWS::ResourceGroups::Group
+    Properties:
+      Name:
+        Fn::Sub: ApplicationInsights-SAM-${AWS::StackName}
+      ResourceQuery:
+        Type: CLOUDFORMATION_STACK_1_0
+
+  ApplicationInsightsMonitoring:
+    Type: AWS::ApplicationInsights::Application
+    Properties:
+      ResourceGroupName:
+        Ref: ApplicationResourceGroup
+      AutoConfigurationEnabled: 'true'
+
+Outputs:
+  EmailFunction:
+    Description: Email Lambda Function ARN
+    Value: !GetAtt EmailFunction.Arn
