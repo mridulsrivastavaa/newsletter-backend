@@ -12,6 +12,7 @@ from email.mime.application import MIMEApplication
 from email.mime.text import MIMEText
 from email.utils import formataddr
 from boto3.dynamodb.types import TypeDeserializer
+from datetime import datetime
 
 # Setup temporary directory (cross-platform)
 TMP_DIR = "/tmp" if os.name != "nt" else os.path.join(os.getcwd(), "tmp")
@@ -160,11 +161,47 @@ def lambda_handler(event, context):
             user_data = get_user_data(handle)
             pdf_file = generate_pdf(user_data, handle)
 
+            # S3 upload logic
+            s3 = boto3.client('s3')
+            bucket_name = f"cf-user-{handle.lower()}"  # Ensuring uniqueness and lowercase
+
+            # Check if bucket exists
+            try:
+                s3.head_bucket(Bucket=bucket_name)
+                logger.info(f"S3 bucket '{bucket_name}' already exists.")
+            except s3.exceptions.ClientError as e:
+                error_code = int(e.response['Error']['Code'])
+                if error_code == 404:
+                    logger.info(f"Bucket '{bucket_name}' does not exist. Creating new one.")
+                    try:
+                        s3.create_bucket(
+                            Bucket=bucket_name,
+                            CreateBucketConfiguration={'LocationConstraint': 'ap-south-1'}
+                        )
+                        logger.info(f"Bucket '{bucket_name}' created.")
+                    except Exception as e:
+                        logger.error(f"Failed to create bucket '{bucket_name}': {e}")
+                        raise
+                else:
+                    logger.error(f"Unexpected error checking bucket '{bucket_name}': {e}")
+                    raise
+
+            # Upload to S3
+            current_date = datetime.now().strftime('%Y-%m-%d')
+            s3_key = f"{handle}/{current_date}.pdf"
+
+            try:
+                s3.upload_file(pdf_file, bucket_name, s3_key)
+                logger.info(f"Uploaded PDF for {handle} to s3://{bucket_name}/{s3_key}")
+            except Exception as e:
+                logger.error(f"Failed to upload PDF for {handle} to S3: {e}")
+                raise
+
+            # Send Email
             latest_info = user_data[-1]['cf_data']
             name = latest_info['handle']
             subject = f"Codeforces Report for {name}"
             body = f"Hi {name},\n\nPlease find attached your latest Codeforces performance report.\n\nBest,\nCodeforces Analytics"
-
             send_email_with_attachment(sender, receiver, subject, body, pdf_file)
 
             # Cleanup
@@ -179,8 +216,8 @@ def lambda_handler(event, context):
         logger.exception("An error occurred during report generation and email process.")
         return {"statusCode": 500, "body": json.dumps({"error": str(e)})}
 
-    logger.info("All emails sent successfully.")
+    logger.info("All emails sent and reports uploaded successfully.")
     return {
         "statusCode": 200,
-        "body": json.dumps({"message": "Emails sent with personalized PDF reports."})
+        "body": json.dumps({"message": "Emails sent and PDFs uploaded to S3."})
     }
